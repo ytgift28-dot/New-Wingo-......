@@ -1,189 +1,213 @@
 import telebot
+from telebot import types
 import requests
 import time
-import sqlite3
 import threading
+import sqlite3
 from flask import Flask
+import os
 
-# --- কনফিগারেশন ---
-API_TOKEN = '8693790155:AAENrX3-dPm4YxDBVeLC_i-DptoFYpGTtRc'
-ADMIN_ID = 6941003064
-CHANNEL_USERNAME = "@SH_tricks" 
-ADS_LINK = "https://www.profitablecpmratenetwork.com/wnbk2zjv?key=75442aee9e8b64a0d71c17a99228474d"
-OWNER_TAG = "@Suptho1"
-
-bot = telebot.TeleBot(API_TOKEN)
-app = Flask('')
+# ==========================================
+# 🌐 WEB SERVER (For Render Port Fix)
+# ==========================================
+app = Flask(__name__)
 
 @app.route('/')
-def home(): return "Bot is Alive & Running!"
+def home():
+    return "✅ SH AI Predictor is Online!"
 
-def run_web(): app.run(host='0.0.0.0', port=10000)
+def run_web():
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
 
-# --- ডাটাবেস ---
+# ==========================================
+# 🔧 CONFIGURATION
+# ==========================================
+API_TOKEN = "8693790155:AAEa3kfHAkgWHWRzY9Xfsnb7R1AmEPsd2dw" 
+ADMIN_ID = 6941003064
+CHANNEL_USERNAME = "@SH_tricks"
+OWNER_TAG = "@Suptho1"
+ADS_LINK = "https://www.profitablecpmratenetwork.com/wnbk2zjv?key=75442aee9e8b64a0d71c17a99228474d"
+
+bot = telebot.TeleBot(API_TOKEN)
+active_auto_users = {} # Auto loop tracker
+
+# ==========================================
+# 📂 DATABASE SYSTEM
+# ==========================================
 def init_db():
     conn = sqlite3.connect('users.db', check_same_thread=False)
-    cursor = conn.cursor()
-    cursor.execute('''CREATE TABLE IF NOT EXISTS users 
-                      (user_id INTEGER PRIMARY KEY, limit_count INTEGER, status TEXT)''')
+    conn.execute('''CREATE TABLE IF NOT EXISTS users 
+                    (user_id INTEGER PRIMARY KEY, credits INTEGER, status TEXT)''')
     conn.commit()
     conn.close()
 
-def get_user_info(user_id):
+def get_user(user_id):
     conn = sqlite3.connect('users.db', check_same_thread=False)
     cursor = conn.cursor()
-    cursor.execute("SELECT limit_count, status FROM users WHERE user_id = ?", (user_id,))
+    cursor.execute("SELECT credits, status FROM users WHERE user_id = ?", (user_id,))
     row = cursor.fetchone()
     conn.close()
     return row if row else (0, 'active')
 
-def update_user(user_id, limit=None, status=None):
-    cl, cs = get_user_info(user_id)
-    nl = limit if limit is not None else cl
-    ns = status if status is not None else cs
+def update_user(user_id, credits=None, status=None):
+    c, s = get_user(user_id)
+    new_c = credits if credits is not None else c
+    new_s = status if status is not None else s
     conn = sqlite3.connect('users.db', check_same_thread=False)
-    cursor = conn.cursor()
-    cursor.execute("INSERT OR REPLACE INTO users (user_id, limit_count, status) VALUES (?, ?, ?)", (user_id, nl, ns))
+    conn.execute("INSERT OR REPLACE INTO users VALUES (?, ?, ?)", (user_id, new_c, new_s))
     conn.commit()
     conn.close()
 
-def is_subscribed(user_id):
+# ==========================================
+# 🧠 PREDICTION LOGIC (300 Round Support)
+# ==========================================
+def fetch_prediction():
+    URL = "https://draw.ar-lottery01.com/WinGo/WinGo_30S/GetHistoryIssuePage.json"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Content-Type": "application/json",
+        "Referer": "https://draw.ar-lottery01.com/"
+    }
     try:
-        member = bot.get_chat_member(CHANNEL_USERNAME, user_id)
-        return member.status in ['member', 'administrator', 'creator']
+        # ৩০০ রাউন্ড ডাটা আনা হচ্ছে
+        res = requests.get(URL, params={"pageNo":1, "pageSize":300}, headers=headers, timeout=15)
+        data = res.json().get('data', {}).get('list', [])
+        if not data: return None
+        
+        issue = data[0]['issueNumber']
+        num = int(data[0]['number'])
+        actual = "BIG 🐘" if num >= 5 else "SMALL 🐜"
+        
+        # Simple Pattern Analysis
+        last_5 = [1 if int(d['number']) >= 5 else 0 for d in data[:5]]
+        pred_val = "SMALL 🐜" if sum(last_5) >= 3 else "BIG 🐘"
+        
+        return issue, actual, pred_val, "Pattern: " + ("Dragon" if sum(last_5) >= 4 else "Trend")
+    except: return None
+
+# ==========================================
+# 🔄 AUTO LOOP FUNCTION
+# ==========================================
+def auto_loop(chat_id):
+    last_issue = None
+    while active_auto_users.get(chat_id, False):
+        try:
+            credits, status = get_user(chat_id)
+            if credits <= 0 and status != 'vip':
+                bot.send_message(chat_id, "❌ ক্রেডিট শেষ! অটো সিগন্যাল বন্ধ হয়ে গেছে।")
+                active_auto_users[chat_id] = False
+                break
+                
+            res = fetch_prediction()
+            if res:
+                issue, actual, pred, logic = res
+                if issue != last_issue:
+                    if status != 'vip': update_user(chat_id, credits=credits-1)
+                    
+                    next_issue = int(issue) + 1
+                    msg = f"🆔 **Period:** `{issue}`\n🎲 **Result:** {actual}\n\n🔮 **NEXT:** `{next_issue}`\n🔥 **PRED:** `{pred}`\n💡 **Logic:** {logic}\n\n👤 Owner: {OWNER_TAG}"
+                    
+                    markup = types.InlineKeyboardMarkup()
+                    markup.add(types.InlineKeyboardButton("🛑 STOP", callback_data="stop_auto"))
+                    bot.send_message(chat_id, msg, parse_mode='Markdown', reply_markup=markup)
+                    last_issue = issue
+            time.sleep(10)
+        except: time.sleep(10)
+
+# ==========================================
+# 🛡️ HANDLERS & HELPERS
+# ==========================================
+def is_joined(user_id):
+    try:
+        m = bot.get_chat_member(CHANNEL_USERNAME, user_id)
+        return m.status in ['member', 'administrator', 'creator']
     except: return False
 
-# --- Original Header & 300 List Analysis ---
-def get_original_prediction():
-    URL = "https://draw.ar-lottery01.com/WinGo/WinGo_30S/GetHistoryIssuePage.json"
-    
-    # অরিজিনাল ব্রাউজার হেডারস
-    headers = {
-        "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Content-Type": "application/json",
-        "Origin": "https://draw.ar-lottery01.com",
-        "Referer": "https://draw.ar-lottery01.com/",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-    
-    try:
-        # ৩০০ রাউন্ড চেক করা হচ্ছে (আপনার রিকোয়েস্ট অনুযায়ী)
-        res = requests.get(URL, params={"pageNo":1, "pageSize":300}, headers=headers, timeout=10)
-        json_data = res.json()
-        data_list = json_data.get('data', {}).get('list', [])
-        
-        if not data_list: return None
-        
-        # লেটেস্ট ১০ রাউন্ডের প্যাটার্ন দেখা
-        current_pattern = [1 if int(d['number']) >= 5 else 0 for d in data_list[:10]]
-        
-        best_match = None
-        max_matches = 0
-
-        # ৩০০ রাউন্ডের ভেতরে প্যাটার্ন সার্চ
-        for i in range(1, len(data_list) - 11):
-            past_pattern = [1 if int(data_list[j]['number']) >= 5 else 0 for j in range(i, i + 10)]
-            matches = sum(1 for a, b in zip(current_pattern, past_pattern) if a == b)
-            
-            if matches >= 8: # ৮০% বা তার বেশি মিললে
-                best_match = "BIG 🟢" if int(data_list[i-1]['number']) >= 5 else "SMALL 🔴"
-                max_matches = matches
-                break
-
-        # যদি প্যাটার্ন না মেলে তবে জেনারেল ট্রেন্ড (Fallback)
-        if not best_match:
-            recent_avg = sum(current_pattern[:5])
-            best_match = "SMALL 🔴" if recent_avg >= 3 else "BIG 🟢"
-            max_matches = 7 # ডামি হিসেবে ৭ (৭০%) দেখানো হবে
-
-        issue = int(data_list[0]['issue']) + 1
-        return f"✨ <b>Period:</b> <code>{issue}</code>\n🎯 <b>Prediction:</b> {best_match}\n🔥 <b>Accuracy:</b> <code>{max_matches*10}%</code>"
-        
-    except Exception as e:
-        print(f"API Error: {e}")
-        return None
-
-# --- হ্যান্ডলারস ---
 @bot.message_handler(commands=['start'])
-def start(message):
-    uid = message.from_user.id
-    if not is_subscribed(uid):
-        markup = telebot.types.InlineKeyboardMarkup()
-        markup.add(telebot.types.InlineKeyboardButton("✅ Join Channel", url=f"https://t.me/{CHANNEL_USERNAME.replace('@','')}"))
-        bot.send_message(uid, "❌ <b>চ্যানেলে জয়েন করুন!</b>", reply_markup=markup, parse_mode="HTML")
-        return
-    update_user(uid)
-    markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.add("🎰 Get Prediction", "📺 Watch Ad (5 Credit)")
-    markup.add("👤 My Account", "📢 Support")
-    bot.send_message(uid, "👋 স্বাগতম! প্রেডিকশন নিতে নিচে চাপুন।", reply_markup=markup, parse_mode="HTML")
+def start(m):
+    update_user(m.chat.id)
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton("📢 Join Channel", url=f"https://t.me/{CHANNEL_USERNAME[1:]}"))
+    markup.add(types.InlineKeyboardButton("✅ Start Using", callback_data="main_menu"))
+    bot.send_message(m.chat.id, f"👋 Welcome to **SH AI Predictor**!\n\nJoin our channel to continue.", parse_mode='Markdown', reply_markup=markup)
 
 @bot.message_handler(commands=['admin'])
-def admin(message):
-    if message.from_user.id == ADMIN_ID:
-        markup = telebot.types.InlineKeyboardMarkup()
-        markup.add(telebot.types.InlineKeyboardButton("📊 Stats", callback_data="a_stats"),
-                   telebot.types.InlineKeyboardButton("➕ Add Credit", callback_data="a_add"))
-        markup.add(telebot.types.InlineKeyboardButton("👑 VIP", callback_data="a_vip"),
-                   telebot.types.InlineKeyboardButton("🚫 Ban", callback_data="a_ban"))
-        bot.send_message(ADMIN_ID, "🛠 Admin Panel:", reply_markup=markup, parse_mode="HTML")
+def admin_panel(m):
+    if m.chat.id == ADMIN_ID:
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("➕ Add Credit", callback_data="a_add"), types.InlineKeyboardButton("👑 Make VIP", callback_data="a_vip"))
+        markup.add(types.InlineKeyboardButton("📢 Broadcast", callback_data="a_bc"))
+        bot.send_message(ADMIN_ID, "🛠 **Admin Panel**", reply_markup=markup)
 
-@bot.message_handler(func=lambda m: True)
-def handle_text(message):
-    uid = message.from_user.id
-    limit, status = get_user_info(uid)
-    if status == 'banned': return
-
-    if message.text == "🎰 Get Prediction":
-        if not is_subscribed(uid):
-            bot.send_message(uid, "❌ আগে জয়েন করুন!")
-            return
-        if limit <= 0 and status != 'vip':
-            bot.send_message(uid, "❌ ক্রেডিট শেষ!")
-            return
-        
-        res = get_original_prediction()
-        if res:
-            if status != 'vip': update_user(uid, limit=limit-1)
-            bot.send_message(uid, f"🎰 <b>Wingo 30S Result:</b>\n\n{res}\n\n👤 Owner: {OWNER_TAG}", parse_mode="HTML")
-        else:
-            bot.send_message(uid, "⚠️ API এরর! লটারি সাইট রেসপন্স করছে না।")
-
-    elif message.text == "📺 Watch Ad (5 Credit)":
-        markup = telebot.types.InlineKeyboardMarkup()
-        markup.add(telebot.types.InlineKeyboardButton("🔗 Watch Video", url=ADS_LINK))
-        markup.add(telebot.types.InlineKeyboardButton("✅ Claim Reward", callback_data="claim"))
-        bot.send_message(uid, "বিজ্ঞাপন লিঙ্কে ক্লিক করার পর Claim বাটন চাপুন।", reply_markup=markup)
-
-    elif message.text == "👤 My Account":
-        bot.send_message(uid, f"💰 ক্রেডিট: <code>{limit}</code>\n🌟 স্ট্যাটাস: {status.upper()}", parse_mode="HTML")
-
-# --- কলব্যাকস ---
 @bot.callback_query_handler(func=lambda call: True)
-def query_handler(call):
-    uid = call.from_user.id
-    if call.data == "claim":
-        update_user(uid, limit=get_user_info(uid)[0]+5)
-        bot.answer_callback_query(call.id, "✅ ৫ ক্রেডিট যোগ হয়েছে!")
-        bot.edit_message_text("✅ ক্রেডিট যোগ করা হয়েছে!", chat_id=call.message.chat.id, message_id=call.message.message_id)
+def handle_query(call):
+    uid = call.message.chat.id
+    if call.data == "main_menu":
+        if not is_joined(uid):
+            bot.answer_callback_query(call.id, "❌ Join Channel First!", show_alert=True)
+            return
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        markup.add("🎰 Auto Signal", "📺 Watch Ad (+5)")
+        markup.add("👤 My Account", "📢 Support")
+        bot.send_message(uid, "✅ Verified! Select an option:", reply_markup=markup)
+
+    elif call.data == "start_auto":
+        credits, status = get_user(uid)
+        if credits <= 0 and status != 'vip':
+            bot.answer_callback_query(call.id, "❌ No Credits!", show_alert=True)
+            return
+        active_auto_users[uid] = True
+        threading.Thread(target=auto_loop, args=(uid,)).start()
+        bot.edit_message_text("🚀 Auto Signals Started!", uid, call.message.message_id)
+
+    elif call.data == "stop_auto":
+        active_auto_users[uid] = False
+        bot.send_message(uid, "🛑 Auto Signal Stopped.")
+
+    elif call.data == "claim":
+        update_user(uid, credits=get_user(uid)[0]+5)
+        bot.edit_message_text("✅ +5 Credits added!", uid, call.message.message_id)
+
     elif call.data.startswith("a_") and uid == ADMIN_ID:
         act = call.data.split("_")[1]
-        msg = bot.send_message(ADMIN_ID, f"⌨️ {act.upper()} করার জন্য ID দিন:")
+        msg = bot.send_message(ADMIN_ID, f"Enter User ID for {act}:")
         bot.register_next_step_handler(msg, admin_action, act)
 
-def admin_action(message, act):
+def admin_action(m, act):
     try:
-        target = int(message.text.strip())
-        if act == "add": update_user(target, limit=get_user_info(target)[0]+10)
-        elif act == "vip": update_user(target, status='vip')
-        elif act == "ban": update_user(target, status='banned')
-        bot.send_message(ADMIN_ID, "✅ সফল হয়েছে!")
-    except:
-        bot.send_message(ADMIN_ID, "❌ আইডি ভুল দিয়েছেন।")
+        tid = int(m.text)
+        if act == "add": update_user(tid, credits=get_user(tid)[0]+50)
+        elif act == "vip": update_user(tid, status='vip')
+        bot.send_message(ADMIN_ID, "✅ Done!")
+    except: bot.send_message(ADMIN_ID, "❌ Error!")
 
+@bot.message_handler(func=lambda m: True)
+def handle_text(m):
+    uid = m.chat.id
+    credits, status = get_user(uid)
+    
+    if m.text == "🎰 Auto Signal":
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("▶️ START AUTO", callback_data="start_auto"))
+        bot.send_message(uid, f"💰 Credits: {credits}\n🌟 Status: {status.upper()}", reply_markup=markup)
+
+    elif m.text == "📺 Watch Ad (+5)":
+        markup = types.InlineKeyboardMarkup()
+        markup.add(types.InlineKeyboardButton("🔗 Watch Ad", url=ADS_LINK))
+        markup.add(telebot.types.InlineKeyboardButton("✅ Claim", callback_data="claim"))
+        bot.send_message(uid, "Click Watch and wait 10s.", reply_markup=markup)
+
+    elif m.text == "👤 My Account":
+        bot.send_message(uid, f"👤 User: `{uid}`\n💰 Credits: `{credits}`\n🌟 Status: `{status.upper()}`", parse_mode='Markdown')
+
+    elif m.text == "📢 Support":
+        bot.send_message(uid, f"Contact: {OWNER_TAG}")
+
+# ==========================================
+# 🔥 EXECUTION
+# ==========================================
 if __name__ == "__main__":
     init_db()
-    bot.remove_webhook()
     threading.Thread(target=run_web).start()
     bot.infinity_polling(skip_pending=True)
