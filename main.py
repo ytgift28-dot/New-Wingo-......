@@ -13,7 +13,7 @@ OWNER_TAG = "@Suptho1"
 
 bot = telebot.TeleBot(API_TOKEN)
 
-# --- Database Setup ---
+# --- Database & Prediction Logic (আগের মতোই থাকবে) ---
 def init_db():
     conn = sqlite3.connect('users.db', check_same_thread=False)
     cursor = conn.cursor()
@@ -41,7 +41,6 @@ def update_user(user_id, limit=None, status=None):
     conn.commit()
     conn.close()
 
-# --- Force Join Check ---
 def is_subscribed(user_id):
     try:
         member = bot.get_chat_member(CHANNEL_USERNAME, user_id)
@@ -49,33 +48,26 @@ def is_subscribed(user_id):
     except:
         return False
 
-# --- Advanced 10-Round Pattern Match Logic ---
 def get_advanced_prediction():
     URL = "https://draw.ar-lottery01.com/WinGo/WinGo_30S/GetHistoryIssuePage.json"
     try:
-        # 4000-5000 round scan korte page size boro kora hoyeche
         res = requests.get(URL, params={"pageNo":1, "pageSize":100}, timeout=10)
         data = res.json().get('data', {}).get('list', [])
         if len(data) < 20: return None
         
-        # Bortomaner sesh 10-ti round er pattern (1=BIG, 0=SMALL)
         current_p = [1 if int(d['number']) >= 5 else 0 for d in data[:10]]
-        
         best_match_result = None
         max_matches = 0
 
-        # Purono data-te loop chaliye match khoja
         for i in range(1, len(data) - 11):
             past_p = [1 if int(data[j]['number']) >= 5 else 0 for j in range(i, i + 10)]
-            
-            # Koyti round match korche (8 ba 9 ta milte hobe)
             matches = sum(1 for a, b in zip(current_p, past_p) if a == b)
             
-            if matches >= 9: # 9 ba 10 ta milge High Accuracy
+            if matches >= 9:
                 best_match_result = "BIG 🟢" if int(data[i-1]['number']) >= 5 else "SMALL 🔴"
                 max_matches = matches
-                if matches == 10: break # 100% match pele loop bondho
-            elif matches == 8 and not best_match_result: # 8 ta milleo count hobe jodi 9 ta na thake
+                if matches == 10: break
+            elif matches == 8 and not best_match_result:
                 best_match_result = "BIG 🟢" if int(data[i-1]['number']) >= 5 else "SMALL 🔴"
                 max_matches = matches
 
@@ -83,34 +75,27 @@ def get_advanced_prediction():
             acc_percent = (max_matches / 10) * 100
             issue = int(data[0]['issue']) + 1
             return f"✨ <b>Period:</b> <code>{issue}</code>\n🎯 <b>Prediction:</b> {best_match_result}\n🔥 <b>Accuracy:</b> <code>{acc_percent}%</code>\n📊 <b>Logic:</b> Pattern Match ({max_matches}/10)"
-        return "⏳ <b>Market Analyzing...</b>\nStrong pattern match paini, ektu por try korun."
-    except Exception as e:
-        print(f"API Error: {e}")
+        return "⏳ <b>Market Analyzing...</b>\nসঠিক প্যাটার্ন পাওয়া যায়নি, কিছুক্ষণ পর চেষ্টা করুন।"
+    except:
         return None
 
-# --- Main Keyboards ---
+# --- UI & Menus ---
 def main_menu():
     markup = telebot.types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.add("🎰 Get Prediction", "📺 Watch Ad (5 Credit)")
     markup.add("👤 My Account", "📢 Support")
     return markup
 
-# --- Handlers ---
 @bot.message_handler(commands=['start'])
 def start(message):
     uid = message.from_user.id
     _, status = get_user_info(uid)
-    
-    if status == 'banned':
-        bot.send_message(uid, "🚫 <b>Banned!</b>", parse_mode="HTML")
-        return
-
+    if status == 'banned': return
     if not is_subscribed(uid):
         markup = telebot.types.InlineKeyboardMarkup()
         markup.add(telebot.types.InlineKeyboardButton("✅ Join Channel", url=f"https://t.me/{CHANNEL_USERNAME.replace('@','')}"))
         bot.send_message(uid, f"⚠️ Access Denied! Join {CHANNEL_USERNAME} first.", reply_markup=markup, parse_mode="HTML")
         return
-
     update_user(uid)
     bot.send_message(uid, f"👋 Welcome! Get results with 90%+ Accuracy.\nOwner: {OWNER_TAG}", reply_markup=main_menu(), parse_mode="HTML")
 
@@ -118,17 +103,13 @@ def start(message):
 def handle_pred(message):
     uid = message.from_user.id
     limit, status = get_user_info(uid)
-    if status == 'banned': return
-    
     if limit <= 0 and status != 'vip':
-        bot.send_message(uid, "❌ Credit shesh! Ad dekhe credit nin.")
+        bot.send_message(uid, "❌ Credit শেষ! Ad দেখে ক্রেডিট নিন।")
         return
-
     res = get_advanced_prediction()
     if res:
         if "Analyzing" not in res and status != 'vip':
             update_user(uid, limit=limit-1)
-        
         bot.send_message(uid, f"🎰 <b>Wingo 30S</b>\n\n{res}\n\n📉 Credit: <code>{'VIP' if status=='vip' else limit-1}</code>\n👤 Owner: {OWNER_TAG}", parse_mode="HTML")
 
 @bot.message_handler(func=lambda m: m.text == "📺 Watch Ad (5 Credit)")
@@ -136,49 +117,19 @@ def handle_ad(message):
     uid = message.from_user.id
     markup = telebot.types.InlineKeyboardMarkup()
     markup.add(telebot.types.InlineKeyboardButton("🔗 Watch Video", url=ADS_LINK))
-    bot.send_message(uid, "⏳ Link-e click kore 10 sec ad dekhun.", reply_markup=markup)
-    
+    bot.send_message(uid, "⏳ লিংকে ক্লিক করে ১০ সেকেন্ড বিজ্ঞাপনটি দেখুন।", reply_markup=markup)
     def reward():
         time.sleep(12)
         update_user(uid, limit=get_user_info(uid)[0]+5)
-        bot.send_message(uid, "✅ 5 Credit added!")
+        bot.send_message(uid, "✅ ৫ ক্রেডিট যোগ করা হয়েছে!")
     threading.Thread(target=reward).start()
 
-@bot.message_handler(func=lambda m: m.text == "👤 My Account")
-def account(message):
-    limit, status = get_user_info(message.from_user.id)
-    bot.send_message(message.chat.id, f"👤 <b>Account</b>\n\n💰 Credit: <code>{limit}</code>\n🌟 Status: {status.upper()}", parse_mode="HTML")
-
-# --- Admin Panel ---
-@bot.message_handler(commands=['admin'])
-def admin_cmd(message):
-    if message.from_user.id != ADMIN_ID: return
-    msg = ("🛠 <b>Admin</b>\n\n"
-           "<code>/add [ID] [Amt]</code>\n"
-           "<code>/vip [ID]</code>\n"
-           "<code>/ban [ID]</code>\n"
-           "<code>/broadcast [Msg]</code>")
-    bot.send_message(ADMIN_ID, msg, parse_mode="HTML")
-
-@bot.message_handler(commands=['add'])
-def add_c(message):
-    if message.from_user.id != ADMIN_ID: return
-    try:
-        _, uid, amt = message.text.split()
-        update_user(int(uid), limit=get_user_info(int(uid))[0]+int(amt))
-        bot.send_message(ADMIN_ID, "✅ Success!")
-    except: pass
-
-@bot.message_handler(commands=['broadcast'])
-def b_cast(message):
-    if message.from_user.id != ADMIN_ID: return
-    text = message.text.replace("/broadcast ", "")
-    conn = sqlite3.connect('users.db')
-    users = conn.execute("SELECT user_id FROM users").fetchall()
-    for u in users:
-        try: bot.send_message(u[0], f"📢 <b>ADMIN:</b>\n\n{text}", parse_mode="HTML")
-        except: pass
-
+# --- Main Polling with Conflict Prevention ---
 if __name__ == "__main__":
     init_db()
-    bot.polling(none_stop=True)
+    print("Bot is starting...")
+    # বোট চালু করার আগে আগের সব পেন্ডিং আপডেট মুছে দিবে
+    bot.remove_webhook()
+    time.sleep(1)
+    # infinity_polling ব্যবহার করা হয়েছে যাতে ক্র্যাশ করলেও অটো রিস্টার্ট নেয়
+    bot.infinity_polling(skip_pending=True)
