@@ -5,7 +5,7 @@ import sqlite3
 import threading
 
 # --- Configuration ---
-API_TOKEN = '7709568330:AAERHIvJFI5X4-zOgLcwqTNEJ0bj1ME0c5Y'
+API_TOKEN = '8693790155:AAEEIi4IIumkYTtsQISh6uG9JWPJsCXPPW8'
 ADMIN_ID = 6941003064
 CHANNEL_USERNAME = "@SH_tricks" 
 ADS_LINK = "https://www.profitablecpmratenetwork.com/wnbk2zjv?key=75442aee9e8b64a0d71c17a99228474d"
